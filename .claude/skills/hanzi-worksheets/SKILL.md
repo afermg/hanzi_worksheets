@@ -45,15 +45,21 @@ The driver sets four env vars `gen.py` reads at import time:
 | `CWG_FONT_PATH`     | absolute path to the TTF |
 | `CWG_MAX_CHARACTERS`| input ceiling (upstream caps at 50 for the Flask demo) |
 
-## Input format
+## Input formats
 
-TSV only (Markdown support was removed deliberately — don't add it back). Four tab-separated columns, no header:
+Two formats accepted (file extension picks the parser):
 
-```
-traditional<TAB>simplified<TAB>pinyin<TAB>definition
-```
+- **`.tsv`** — 4 columns, tab-separated, no header:
+  `traditional<TAB>simplified<TAB>pinyin<TAB>definition`. Only the
+  *simplified* column is consumed.
+- **`.txt`** — one entry per line. A line is either a single character, a
+  multi-char word, or a sequence containing inline `(...)` groups
+  (e.g. `(我们)去年` → entries `我们`, `去`, `年`). Both ASCII and full-width
+  parens are recognised.
 
-Only the *simplified* column is consumed. Pinyin and definitions on the worksheet come from CEDICT via cwg's `--info` lookup, not from the TSV. Multi-character entries (e.g. `爱好`) are auto-wrapped in `(...)` so cwg groups them and renders one combined definition.
+Markdown support was removed deliberately. Don't add it back.
+
+Pinyin and definitions on the worksheet come from CEDICT via cwg's `--info` lookup, not from the input file. Multi-character entries are auto-wrapped in `(...)` by `build_characters_arg()` so cwg groups them and renders one combined definition.
 
 ## Patches to gen.py
 
@@ -73,47 +79,50 @@ TONE_COLORS = {
 
 Tone is detected from diacritics on vowels (macron=1, acute=2, caron=3, grave=4, no mark=5). See `_TONE_VOWELS` and `detect_tone()`. Don't add a pinyin-lookup table — the diacritic alone is unambiguous.
 
-### Stroke rendering: build-up from empty to dimmed
+### Stroke rendering: build-up from stroke 1 to full character
 
 `create_stroke_svg` produces three categories of PNG and the distinction matters:
 
-- `<char>.png` (via `create_character_svg`, called with `dimmed=False`) — solid black reference character. Used in cell 0 of the top row.
-- `<char>0.png` — full dimmed character. Used as the trace template in Row 2.
-- `<char>k.png` for k≥1 — cumulative strokes 0..k-1 in dimmed gray, **no** future-stroke preview. Used across stroke-progression cells.
+- `<char>.png` (via `create_character_svg`, called with `dimmed=False`) — solid reference character. The **only** place this solid glyph appears in a character block is cell 0 of the top stroke row. Don't reuse it elsewhere.
+- `<char>0.png` — full dimmed character (gray). Used in every cell of the dimmed-trace row, and as the fallback in stroke cells past stroke_n.
+- `<char>k.png` for k≥1 — strokes 1..k drawn in dimmed gray, **no** future-stroke preview. Used across stroke-progression cells.
 
-The previous "current stroke in red, future strokes ghosted in gray" look was deliberately removed — the user found it visually noisy. The progression now reads as "empty → full dimmed character." If you need a different convention, change the `dimmed=True` branch of `create_stroke_svg` and update `create_character_svg`'s flag accordingly.
+The progression reads as "stroke 1 → full character." The previous "current stroke in red, future strokes ghosted in gray" look was deliberately removed (visually noisy). If you need a different convention, change the `dimmed=True` branch of `create_stroke_svg` and update `create_character_svg`'s flag accordingly.
 
-### Layout: 4 chars/page, 12 cells/row, three practice rows
+### Layout: variable-height blocks, 9 cells per row, only top row carries the reference
 
-`CHARACTERS_PER_PAGE = 4`, `CHARACTERS_PER_ROW = 12`, `PRACTICE_ROWS = 3`, no page header, no footer, no radical band. Per character block:
+`CHARACTERS_PER_ROW = 9`. No page header, no footer, no radical band. Per character block, rows are sized to stroke count:
+
+- **1 top stroke row** — cell 0 is the solid reference character (the only place it appears). Cells 1..8 hold strokes 1..8.
+- **Overflow stroke rows** (only when `stroke_n > 8`) — all 9 cells hold continuing strokes. No solid reference, so the build-up reads cleanly across rows.
+- **1 dimmed-trace row** — every cell holds the dimmed full character.
+- **1 cross-only row** — every cell holds just the faint cross guide (no character at all).
+
+Past the last real stroke, trailing cells in the final stroke row fall back to the full dimmed character so the build-up "lands" cleanly.
 
 ```
-┌────┬────────────────────────────────────────────────┐
-│ 字 │ ░ ░ ░ ░ ░ ░ ░ 字 字 字 字  ← stroke build-up  │
-├────┴────────────────────────────────────────────────┤
-│ ░ ░ ░ ░ ░ ░ 字 字 字 字 字 字  ← stroke build-up   │
-├─────────────────────────────────────────────────────┤
-│ 字 字 字 字 字 字 字 字 字 字 字 字  ← dimmed trace │
-├─────────────────────────────────────────────────────┤
-│  ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕   ← cross-guide only   │
-└─────────────────────────────────────────────────────┘
+┌──────┬────────────────────────────────────────┐
+│ 字   │ ① ② ③ ④ ⑤ ⑥ ⑦ ⑧   ← strokes 1..8 │   ← top row, only here
+├──────┴────────────────────────────────────────┤      is the solid char
+│ ⑨ ⑩ ⑪ ⑫ ⑬ ░ ░ ░ ░  ← overflow strokes      │   (only when stroke_n > 8)
+├───────────────────────────────────────────────┤
+│ 字 字 字 字 字 字 字 字 字 ← dimmed full     │
+├───────────────────────────────────────────────┤
+│  ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕   ← cross guide only  │
+└───────────────────────────────────────────────┘
 ```
 
 Pinyin (tone-colored) + short definition rotate 90° in the right margin via `_draw_side_label()`. The left margin carries the word-group curly brace when characters are grouped.
 
-If you change `PRACTICE_ROWS`, `CHARACTERS_PER_PAGE`, or `CHARACTERS_PER_ROW`, recompute the height budget — Letter is 792 pt tall and:
+Per-character height comes from `compute_char_layout(stroke_n)` → `(n_total_rows, n_stroke_rows)`. Page-level packing is `compute_page_layout(character_infos)` — greedy: each char starts wherever the previous ended; if the next char doesn't fit, the page breaks. This means **variable chars-per-page** — don't rely on a fixed `CHARACTERS_PER_PAGE` constant (it doesn't exist anymore).
 
-```
-SQUARE_SIZE          = (PAGE_W - 2 * GRID_OFFSET) / CHARACTERS_PER_ROW
-CHARACTER_ROW_HEIGHT = SQUARE_SIZE * (1 + PRACTICE_ROWS)
-                        + RADICAL_HEIGHT + RADICAL_PINYIN_HEIGHT
-```
-
-You want `CHARACTERS_PER_PAGE * CHARACTER_ROW_HEIGHT ≤ ~790`.
+If you change `CHARACTERS_PER_ROW` or the row-count formula, the word-spanning code in `draw_words` / `draw_top_word` / `draw_bottom_word` / `draw_full_word` reads positions from the `positions` list — they don't recompute y values from indices. Keep them position-aware.
 
 ### Word grouping + per-char definition suppression
 
 cwg's parentheses syntax (`(爱好)`) draws a curly brace + combined definition in the left margin. We added a `suppress_definition` flag to `draw_character_row` so individual characters belonging to a word group don't ALSO show their own definition — otherwise both compete and the result is noisy.
+
+The word-span helpers (`draw_words`, `draw_top_word`, `draw_bottom_word`, `draw_full_word`) and `get_spanning_translations` were rewritten to take the precomputed `positions` list (output of `compute_page_layout`). They look up actual y coordinates per character index instead of computing `idx * CHARACTER_ROW_HEIGHT` — necessary because blocks have variable height now.
 
 ### Definition truncation, not failure
 
@@ -137,7 +146,9 @@ Noto Sans CJK SC ships as OTC on the system, which reportlab can choke on. Stick
 
 - **`gen.py` runs in a temp working directory.** It writes SVGs and PNGs there per character. The driver copies `sheet.pdf` out at the end. Don't add long-lived state into the working dir.
 - **Pinyin is per-character, list-typed.** `character_info.pinyin` is a list from makemeahanzi; the driver uses `[0]`. Characters with multiple readings show only the first reading.
-- **`<char>.png` and `<char>0.png` are not the same file.** First is solid black (reference), second is full dimmed (trace template). If you change one, check the other.
+- **`<char>.png` and `<char>0.png` are not the same file.** First is solid black (reference, used only in the top row's cell 0), second is full dimmed (trace template and stroke-overflow fallback). If you change one, check the other.
+- **`CHARACTERS_PER_PAGE` does not exist anymore.** The constant was removed when blocks became variable-height. The main loop tracks the current page from `positions[i]['page']` instead. Don't reintroduce a fixed chars-per-page assumption.
+- **Word-span helpers expect `positions`, not raw indices.** `draw_words`, `draw_top_word`, `draw_bottom_word`, `draw_full_word`, `get_spanning_translations` all read y coordinates from the position list. If you add a new word-span helper, take `positions` too.
 - **gen.py's main() exits 0 on errors.** It catches `GenException` and `print`s, then returns. Always check that `sheet.pdf` actually exists before treating a run as successful — the driver does this with `produced.exists()`.
 - **cwg expects the working dir, not the source dir, for character_infos.json.** The driver writes the JSONs into the tempdir via cwg's `--info` phase, then re-reads them in the `--sheet` phase. Don't break this assumption when adding env vars.
 - **The vendored cwg has `.git` removed.** Don't reintroduce it as a submodule — rebase patches manually if upstream changes.
@@ -147,10 +158,10 @@ Noto Sans CJK SC ships as OTC on the system, which reportlab can choke on. Stick
 
 | Goal | Where to edit |
 |------|---------------|
-| New HSK list | Drop a 4-col TSV into `hsk3/`, point `--input` at it. No code changes. |
+| New HSK list | Drop a 4-col TSV (or a plain-text `.txt`, one entry per line) into `hsk3/`, point `--input` at it. No code changes. |
 | Different tone palette | `TONE_COLORS` in `gen.py`. Reportlab `Color(r, g, b)` takes floats in [0, 1]. |
-| Different practice layout | `draw_character_row()` + the constants block at the top of `gen.py`. Recompute the height budget per "Layout" above. |
-| Different page size | `CWG_PAGE_SIZE=a4` or patch the env-read line for new sizes. |
+| Different practice layout | `draw_character_row()` + `compute_char_layout()` / `compute_page_layout()` in `gen.py`. If you change cell counts, also recompute `_stroke_rows_needed()`. |
+| Different page size | `--page-size letter|a4` on the driver, or set `CWG_PAGE_SIZE` directly. Adding a new size means extending the env-read at the top of `gen.py`. |
 | Add a new column to TSV | `read_entries()` in `make_worksheet.py` only reads `cells[1]`. To consume more columns, extend `build_characters_arg()` and decide whether to override cwg's CEDICT-driven lookup or stay layered. |
 | Generate without nix | `setup.sh` still works on plain Linux/macOS if you've got Python 3.11+ with cairosvg + reportlab + pillow plus `7z`. The flake is convenience, not a hard requirement. |
 

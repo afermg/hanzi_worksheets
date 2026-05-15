@@ -418,66 +418,75 @@ def _draw_side_label(canvas, char_block_top_y, block_h, character_info, suppress
 
 def draw_character_row(working_dir, canvas, character_info, top_y, n_total_rows, n_stroke_rows, suppress_definition=False):
     """[hanzi_worksheets patch] Variable-height character block.
-    Layout per character:
-      - n_stroke_rows of stroke build-up (top row + overflow rows for >8-stroke chars)
-      - 1 dimmed-trace row
-      - 1 cross-only row
-    Cell 0 of every row holds the solid reference character — keeps the
-    left edge visually consistent and lets the eye always find the target
-    glyph. Stroke cells (cells 1..N-1) start at stroke 1 in the top row's
-    cell 1, building up continuously across rows."""
+
+    Layout per character (3 rows for ≤8-stroke chars; more for longer ones):
+
+      - Row 0 (top stroke row): cell 0 = solid reference character (the
+        ONLY place the solid glyph appears in the block); cells 1..N-1 =
+        progressive stroke build-up (strokes 1..min(8, stroke_n)).
+      - Rows 1..n_stroke_rows-1 (overflow stroke rows, only when stroke_n > 8):
+        every cell continues the stroke progression. No solid reference,
+        so the build-up reads cleanly left-to-right, top-to-bottom.
+      - Dimmed-trace row: every cell holds the dimmed full character.
+      - Cross-only row: every cell holds just the cross guide.
+
+    Past the last real stroke, trailing cells in the final stroke row fall
+    back to the full dimmed character so the build-up "lands" cleanly."""
     stroke_n = len(character_info.stroke_order)
     character_png = character_info.character + '.png'
     dimmed_png = character_info.character + '0.png'
-    per_row_strokes = CHARACTERS_PER_ROW - 1
 
-    def draw_reference_cell(row_top, row_bot):
-        x = GRID_OFFSET
+    def draw_progressive_cell(x, row_top, row_bot, step):
         canvas.rect(x, row_bot, SQUARE_SIZE, SQUARE_SIZE)
-        path = os.path.join(working_dir, character_png)
+        draw_guide(canvas, x, row_top, Guide.CROSS, working_dir, character_info)
+        fname = (character_info.character + str(step) + '.png'
+                 if 1 <= step <= stroke_n else dimmed_png)
+        path = os.path.join(working_dir, fname)
         if os.path.exists(path):
-            canvas.drawImage(path,
-                             x + SQUARE_PADDING, row_bot + SQUARE_PADDING,
-                             SQUARE_SIZE - 2*SQUARE_PADDING,
-                             SQUARE_SIZE - 2*SQUARE_PADDING, mask='auto')
+            prefill_character(working_dir, canvas,
+                              x + SQUARE_PADDING, row_top - SQUARE_PADDING, fname)
 
-    # Stroke rows
-    for row_idx in range(n_stroke_rows):
+    # Top stroke row — cell 0 is the only solid reference.
+    row_top = top_y
+    row_bot = row_top - SQUARE_SIZE
+    canvas.rect(GRID_OFFSET, row_bot, SQUARE_SIZE, SQUARE_SIZE)
+    ref_path = os.path.join(working_dir, character_png)
+    if os.path.exists(ref_path):
+        canvas.drawImage(ref_path,
+                         GRID_OFFSET + SQUARE_PADDING, row_bot + SQUARE_PADDING,
+                         SQUARE_SIZE - 2*SQUARE_PADDING,
+                         SQUARE_SIZE - 2*SQUARE_PADDING, mask='auto')
+    for cell in range(1, CHARACTERS_PER_ROW):
+        x = GRID_OFFSET + cell * SQUARE_SIZE
+        # In the top row: cell 1 = stroke 1, cell 2 = strokes 1..2, etc.
+        draw_progressive_cell(x, row_top, row_bot, cell)
+
+    # Overflow stroke rows — full row of stroke cells, no solid reference.
+    for row_idx in range(1, n_stroke_rows):
         row_top = top_y - row_idx * SQUARE_SIZE
         row_bot = row_top - SQUARE_SIZE
-        draw_reference_cell(row_top, row_bot)
-        base = row_idx * per_row_strokes
-        for cell in range(1, CHARACTERS_PER_ROW):
+        # Strokes already shown above this row = top row's 8 + (row_idx-1)*9.
+        base_step = (CHARACTERS_PER_ROW - 1) + (row_idx - 1) * CHARACTERS_PER_ROW
+        for cell in range(CHARACTERS_PER_ROW):
             x = GRID_OFFSET + cell * SQUARE_SIZE
-            canvas.rect(x, row_bot, SQUARE_SIZE, SQUARE_SIZE)
-            draw_guide(canvas, x, row_top, Guide.CROSS, working_dir, character_info)
-            step = base + cell
-            if 1 <= step <= stroke_n:
-                fname = character_info.character + str(step) + '.png'
-            else:
-                fname = dimmed_png
-            if os.path.exists(os.path.join(working_dir, fname)):
-                prefill_character(working_dir, canvas,
-                                  x + SQUARE_PADDING, row_top - SQUARE_PADDING, fname)
+            draw_progressive_cell(x, row_top, row_bot, base_step + cell + 1)
 
-    # Dimmed-trace row
+    # Dimmed-trace row — every cell is the dimmed full character.
     trace_top = top_y - n_stroke_rows * SQUARE_SIZE
     trace_bot = trace_top - SQUARE_SIZE
-    draw_reference_cell(trace_top, trace_bot)
-    for cell in range(1, CHARACTERS_PER_ROW):
+    dimmed_path = os.path.join(working_dir, dimmed_png)
+    for cell in range(CHARACTERS_PER_ROW):
         x = GRID_OFFSET + cell * SQUARE_SIZE
         canvas.rect(x, trace_bot, SQUARE_SIZE, SQUARE_SIZE)
         draw_guide(canvas, x, trace_top, Guide.CROSS, working_dir, character_info)
-        path = os.path.join(working_dir, dimmed_png)
-        if os.path.exists(path):
+        if os.path.exists(dimmed_path):
             prefill_character(working_dir, canvas,
                               x + SQUARE_PADDING, trace_top - SQUARE_PADDING, dimmed_png)
 
-    # Cross-only row
+    # Cross-only row — guides only, no character at all.
     cross_top = trace_bot
     cross_bot = cross_top - SQUARE_SIZE
-    draw_reference_cell(cross_top, cross_bot)
-    for cell in range(1, CHARACTERS_PER_ROW):
+    for cell in range(CHARACTERS_PER_ROW):
         x = GRID_OFFSET + cell * SQUARE_SIZE
         canvas.rect(x, cross_bot, SQUARE_SIZE, SQUARE_SIZE)
         draw_guide(canvas, x, cross_top, Guide.CROSS, working_dir, character_info)

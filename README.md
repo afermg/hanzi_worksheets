@@ -12,21 +12,25 @@ Each character block (3 rows for ≤8-stroke chars; more for longer ones):
 
 ```
 ┌────┬────────────────────────────────────────┐  ↑
-│ 字 │ ① ② ③ ④ ⑤ ⑥ ⑦ ⑧   ← strokes 1..8     │  │
-├────┼────────────────────────────────────────┤  │ ← side margin:
-│ 字 │ 字 字 字 字 字 字 字 字 ← dimmed trace │  │   tone-colored
-├────┼────────────────────────────────────────┤  │   pinyin +
-│ 字 │ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕  ← cross-guide only  │  ↓   short def., rotated
-└────┴────────────────────────────────────────┘
+│ 字 │ ① ② ③ ④ ⑤ ⑥ ⑦ ⑧  ← strokes 1..8      │  │
+├────┴────────────────────────────────────────┤  │ ← side margin:
+│ ⑨ ⑩ ⑪ ⑫ ⑬ ░ ░ ░ ░  ← overflow strokes    │  │   tone-colored
+├─────────────────────────────────────────────┤  │   pinyin +
+│ 字 字 字 字 字 字 字 字 字 ← dimmed trace   │  │   short def.,
+├─────────────────────────────────────────────┤  ↓   rotated 90°
+│  ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕ ⊕  ← cross-guide only   │
+└─────────────────────────────────────────────┘
 ```
 
-Cell 0 of every row holds the solid reference character — keeps the left
-edge visually consistent. Cells 1..8 are practice cells: progressive
-strokes on the top row, dimmed tracing in the middle, free practice (with
-just a faint cross guide) on the bottom. Characters with more than 8
-strokes get extra stroke rows: 9–16 strokes → 2 stroke rows + 2 practice
-rows = 4 total, and so on. The left margin carries a curly brace + the
-combined definition whenever a row of characters forms a grouped word.
+Cell 0 of the **top row** holds the solid reference character — the only
+place the solid glyph appears in the block. Every other row follows its
+content type: overflow stroke rows have continuing strokes across all 9
+cells (only present when stroke_n > 8), the dimmed-trace row is dimmed
+in all 9 cells, and the cross-only row has just the faint guide.
+Characters with 9–17 strokes get one overflow row (4 rows total); ≥18
+strokes get two (5 rows); and so on. The left margin carries a curly
+brace + the combined definition whenever a row of characters forms a
+grouped word.
 
 ```
 hanzi_worksheets/
@@ -154,5 +158,6 @@ already know the pre-3.0 vocabulary.
 
 ## License
 
-`cwg/` is GPLv3 (upstream). The rest of this repo is also distributed
-under GPLv3 for compatibility.
+The whole repository is GPLv3. `cwg/` is GPLv3 upstream and the patches
+inherit that license; the rest of the repo is GPLv3 to stay compatible
+with the vendored dependency. See `LICENSE` for the full text.
